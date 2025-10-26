@@ -15,15 +15,15 @@ input double   LotSize = 0.04;              // Lot Size
 input int      GridRange = 3;               // Grid Range (number of grids from close price)
 input int      MagicNumber = 8001;          // Magic Number
 
-input group "=== Buy Grid Settings ==="
-input bool     BuyEnabled = true;           // Buy Grid Enabled
-input double   BuyUpperPrice = 147.53;      // Buy Grid Upper Price (required)
-input double   BuyLowerPrice = 143.53;      // Buy Grid Lower Price (required)
-
 input group "=== Sell Grid Settings ==="
 input bool     SellEnabled = true;          // Sell Grid Enabled
 input double   SellUpperPrice = 151.53;     // Sell Grid Upper Price (required)
 input double   SellLowerPrice = 147.53;     // Sell Grid Lower Price (required)
+
+input group "=== Buy Grid Settings ==="
+input bool     BuyEnabled = true;           // Buy Grid Enabled
+input double   BuyUpperPrice = 147.53;      // Buy Grid Upper Price (required)
+input double   BuyLowerPrice = 143.53;      // Buy Grid Lower Price (required)
 
 // Global Variables
 CTrade trade;
