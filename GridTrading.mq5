@@ -10,7 +10,7 @@
 
 // Input Parameters
 input group "=== Basic Settings ==="
-input double   GridStepPips = 5;            // Grid Step & TP (pips)
+input int      GridStepPips = 5;            // Grid Step & TP (pips)
 input double   LotSize = 0.04;              // Lot Size
 input int      GridRange = 3;               // Grid Range (number of grids from close price)
 input int      MagicNumber = 8001;          // Magic Number
@@ -18,12 +18,12 @@ input int      MagicNumber = 8001;          // Magic Number
 input group "=== Sell Grid Settings ==="
 input bool     SellEnabled = true;          // Sell Grid Enabled
 input double   SellLowerPrice = 147.53;     // Sell Grid Lower Price (required)
-input double   SellRangePips = 400;         // Sell Grid Range (pips from lower price)
+input int      SellRangePips = 400;         // Sell Grid Range (pips from lower price)
 
 input group "=== Buy Grid Settings ==="
 input bool     BuyEnabled = true;           // Buy Grid Enabled
 input double   BuyUpperPrice = 147.53;      // Buy Grid Upper Price (required)
-input double   BuyRangePips = 400;          // Buy Grid Range (pips from upper price)
+input int      BuyRangePips = 400;          // Buy Grid Range (pips from upper price)
 
 // Global Variables
 CTrade trade;
