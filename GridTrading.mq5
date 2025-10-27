@@ -17,13 +17,13 @@ input int      MagicNumber = 8001;          // Magic Number
 
 input group "=== Sell Grid Settings ==="
 input bool     SellEnabled = true;          // Sell Grid Enabled
-input double   SellUpperPrice = 151.53;     // Sell Grid Upper Price (required)
 input double   SellLowerPrice = 147.53;     // Sell Grid Lower Price (required)
+input double   SellRangePips = 400;         // Sell Grid Range (pips from lower price)
 
 input group "=== Buy Grid Settings ==="
 input bool     BuyEnabled = true;           // Buy Grid Enabled
 input double   BuyUpperPrice = 147.53;      // Buy Grid Upper Price (required)
-input double   BuyLowerPrice = 143.53;      // Buy Grid Lower Price (required)
+input double   BuyRangePips = 400;          // Buy Grid Range (pips from upper price)
 
 // Global Variables
 CTrade trade;
@@ -39,6 +39,10 @@ int lowestSellPrice = 0;
 datetime lastBarTime = 0;
 int lastBidPrice = 0;
 int lastAskPrice = 0;
+
+// Calculated grid boundaries
+double sellUpperPrice = 0;
+double buyLowerPrice = 0;
 
 // Cached symbol info
 int symbolDigits;
@@ -78,40 +82,68 @@ int OnInit()
     Print("Lot Size: ", LotSize);
     Print("Grid Range: ", GridRange, " grids from close price");
 
-    // Validate and display buy grid settings
-    if(BuyEnabled)
-    {
-        if(BuyUpperPrice <= 0 || BuyLowerPrice <= 0)
-        {
-            Print("Error: Buy grid upper and lower prices are required");
-            return(INIT_PARAMETERS_INCORRECT);
-        }
-        if(BuyUpperPrice <= BuyLowerPrice)
-        {
-            Print("Error: Buy grid upper price must be greater than lower price");
-            return(INIT_PARAMETERS_INCORRECT);
-        }
-        Print("--- Buy Grid ---");
-        Print("Upper Price: ", BuyUpperPrice);
-        Print("Lower Price: ", BuyLowerPrice);
-    }
-
     // Validate and display sell grid settings
     if(SellEnabled)
     {
-        if(SellUpperPrice <= 0 || SellLowerPrice <= 0)
+        if(SellLowerPrice <= 0)
         {
-            Print("Error: Sell grid upper and lower prices are required");
+            Print("Error: Sell grid lower price is required");
             return(INIT_PARAMETERS_INCORRECT);
         }
-        if(SellUpperPrice <= SellLowerPrice)
+        if(SellRangePips <= 0)
         {
-            Print("Error: Sell grid upper price must be greater than lower price");
+            Print("Error: Sell grid range must be positive");
             return(INIT_PARAMETERS_INCORRECT);
         }
+
+        // Calculate sell upper price from lower price + range pips
+        double pipValue;
+        if(symbolDigits == 3 || symbolDigits == 5)
+            pipValue = SellRangePips * pointValue * 10;
+        else
+            pipValue = SellRangePips * pointValue * 100;
+
+        sellUpperPrice = SellLowerPrice + pipValue;
+
         Print("--- Sell Grid ---");
-        Print("Upper Price: ", SellUpperPrice);
         Print("Lower Price: ", SellLowerPrice);
+        Print("Range: ", SellRangePips, " pips");
+        Print("Upper Price (calculated): ", sellUpperPrice);
+    }
+
+    // Validate and display buy grid settings
+    if(BuyEnabled)
+    {
+        if(BuyUpperPrice <= 0)
+        {
+            Print("Error: Buy grid upper price is required");
+            return(INIT_PARAMETERS_INCORRECT);
+        }
+        if(BuyRangePips <= 0)
+        {
+            Print("Error: Buy grid range must be positive");
+            return(INIT_PARAMETERS_INCORRECT);
+        }
+
+        // Calculate buy lower price from upper price - range pips
+        double pipValue;
+        if(symbolDigits == 3 || symbolDigits == 5)
+            pipValue = BuyRangePips * pointValue * 10;
+        else
+            pipValue = BuyRangePips * pointValue * 100;
+
+        buyLowerPrice = BuyUpperPrice - pipValue;
+
+        if(buyLowerPrice <= 0)
+        {
+            Print("Error: Calculated buy lower price is invalid (", buyLowerPrice, ")");
+            return(INIT_PARAMETERS_INCORRECT);
+        }
+
+        Print("--- Buy Grid ---");
+        Print("Upper Price: ", BuyUpperPrice);
+        Print("Range: ", BuyRangePips, " pips");
+        Print("Lower Price (calculated): ", buyLowerPrice);
     }
 
     Print("Initialization Complete");
@@ -156,16 +188,16 @@ void OnTrade()
         // Update current position status
         UpdateGridStatus();
 
-        // Manage buy grid
-        if(BuyEnabled)
-        {
-            ManageBuyGrid(lastAskPrice, lastBidPrice);
-        }
-
         // Manage sell grid
         if(SellEnabled)
         {
             ManageSellGrid(lastAskPrice, lastBidPrice);
+        }
+
+        // Manage buy grid
+        if(BuyEnabled)
+        {
+            ManageBuyGrid(lastAskPrice, lastBidPrice);
         }
     }
 
@@ -198,16 +230,16 @@ void OnTick()
     // Update current position status
     UpdateGridStatus();
 
-    // Manage buy grid
-    if(BuyEnabled)
-    {
-        ManageBuyGrid(lastAskPrice, lastBidPrice);
-    }
-
     // Manage sell grid
     if(SellEnabled)
     {
         ManageSellGrid(lastAskPrice, lastBidPrice);
+    }
+
+    // Manage buy grid
+    if(BuyEnabled)
+    {
+        ManageBuyGrid(lastAskPrice, lastBidPrice);
     }
 }
 
@@ -265,16 +297,16 @@ void ManageBuyGrid(double ask, double bid)
     int lowerRange = lastAskPrice - (GridRange * gridStepPrice);
 
     // Process all grid levels within range
-    int gridPrice = PriceToInt(BuyLowerPrice);
+    int gridPrice = PriceToInt(BuyUpperPrice);
 
-    // Find nearest grid level at or above lower range
-    while(gridPrice < lowerRange)
+    // Find nearest grid level at or below upper range
+    while(gridPrice > upperRange)
     {
-        gridPrice += gridStepPrice;
+        gridPrice -= gridStepPrice;
     }
 
     // Place orders at all grid levels within range
-    while(gridPrice <= PriceToInt(BuyUpperPrice) && gridPrice <= upperRange)
+    while(gridPrice >= PriceToInt(buyLowerPrice) && gridPrice >= lowerRange)
     {
         if(!CheckOrderExists(gridPrice, true))
         {
@@ -286,11 +318,11 @@ void ManageBuyGrid(double ask, double bid)
             else
                 PlaceOrder(ORDER_TYPE_BUY_STOP, gridPrice, level, true);
         }
-        gridPrice += gridStepPrice;
+        gridPrice -= gridStepPrice;
     }
 
     // Remove unnecessary pending orders (outside range)
-    CleanupOrders(lowerRange, upperRange, true, BuyLowerPrice, BuyUpperPrice);
+    CleanupOrders(lowerRange, upperRange, true, buyLowerPrice, BuyUpperPrice);
 }
 
 //+------------------------------------------------------------------+
@@ -309,16 +341,16 @@ void ManageSellGrid(double ask, double bid)
     int lowerRange = lastBidPrice - (GridRange * gridStepPrice);
 
     // Process all grid levels within range
-    int gridPrice = PriceToInt(SellUpperPrice);
+    int gridPrice = PriceToInt(SellLowerPrice);
 
-    // Find nearest grid level at or below upper range
-    while(gridPrice > upperRange)
+    // Find nearest grid level at or above lower range
+    while(gridPrice < lowerRange)
     {
-        gridPrice -= gridStepPrice;
+        gridPrice += gridStepPrice;
     }
 
     // Place orders at all grid levels within range
-    while(gridPrice >= PriceToInt(SellLowerPrice) && gridPrice >= lowerRange)
+    while(gridPrice <= PriceToInt(sellUpperPrice) && gridPrice <= upperRange)
     {
         if(!CheckOrderExists(gridPrice, false))
         {
@@ -330,11 +362,11 @@ void ManageSellGrid(double ask, double bid)
             else
                 PlaceOrder(ORDER_TYPE_SELL_STOP, gridPrice, level, false);
         }
-        gridPrice -= gridStepPrice;
+        gridPrice += gridStepPrice;
     }
 
     // Remove unnecessary pending orders (outside range)
-    CleanupOrders(lowerRange, upperRange, false, SellLowerPrice, SellUpperPrice);
+    CleanupOrders(lowerRange, upperRange, false, SellLowerPrice, sellUpperPrice);
 }
 
 //+------------------------------------------------------------------+
