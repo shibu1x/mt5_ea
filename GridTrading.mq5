@@ -282,50 +282,6 @@ void UpdateGridStatus()
 }
 
 //+------------------------------------------------------------------+
-//| Manage buy grid                                                  |
-//+------------------------------------------------------------------+
-void ManageBuyGrid(double ask, double bid)
-{
-    if(lastAskPrice <= 0) return;
-
-    // Get current Ask price for order type determination (convert to integer)
-    int currentAsk = PriceToInt(SymbolInfoDouble(_Symbol, SYMBOL_ASK));
-
-    // Buy grid uses last Ask price as reference for range
-    // Calculate range based on last Ask price
-    int upperRange = lastAskPrice + (GridRange * gridStepPrice);
-    int lowerRange = lastAskPrice - (GridRange * gridStepPrice);
-
-    // Process all grid levels within range
-    int gridPrice = PriceToInt(BuyUpperPrice);
-
-    // Find nearest grid level at or below upper range
-    while(gridPrice > upperRange)
-    {
-        gridPrice -= gridStepPrice;
-    }
-
-    // Place orders at all grid levels within range
-    while(gridPrice >= PriceToInt(buyLowerPrice) && gridPrice >= lowerRange)
-    {
-        if(!CheckOrderExists(gridPrice, true))
-        {
-            int level = (int)(PriceToInt(BuyUpperPrice) - gridPrice) / (int)gridStepPrice;
-
-            // Determine order type based on current Ask price
-            if(gridPrice < currentAsk)
-                PlaceOrder(ORDER_TYPE_BUY_LIMIT, gridPrice, level, true);
-            else
-                PlaceOrder(ORDER_TYPE_BUY_STOP, gridPrice, level, true);
-        }
-        gridPrice -= gridStepPrice;
-    }
-
-    // Remove unnecessary pending orders (outside range)
-    CleanupOrders(lowerRange, upperRange, true, buyLowerPrice, BuyUpperPrice);
-}
-
-//+------------------------------------------------------------------+
 //| Manage sell grid                                                 |
 //+------------------------------------------------------------------+
 void ManageSellGrid(double ask, double bid)
@@ -367,6 +323,50 @@ void ManageSellGrid(double ask, double bid)
 
     // Remove unnecessary pending orders (outside range)
     CleanupOrders(lowerRange, upperRange, false, SellLowerPrice, sellUpperPrice);
+}
+
+//+------------------------------------------------------------------+
+//| Manage buy grid                                                  |
+//+------------------------------------------------------------------+
+void ManageBuyGrid(double ask, double bid)
+{
+    if(lastAskPrice <= 0) return;
+
+    // Get current Ask price for order type determination (convert to integer)
+    int currentAsk = PriceToInt(SymbolInfoDouble(_Symbol, SYMBOL_ASK));
+
+    // Buy grid uses last Ask price as reference for range
+    // Calculate range based on last Ask price
+    int upperRange = lastAskPrice + (GridRange * gridStepPrice);
+    int lowerRange = lastAskPrice - (GridRange * gridStepPrice);
+
+    // Process all grid levels within range
+    int gridPrice = PriceToInt(BuyUpperPrice);
+
+    // Find nearest grid level at or below upper range
+    while(gridPrice > upperRange)
+    {
+        gridPrice -= gridStepPrice;
+    }
+
+    // Place orders at all grid levels within range
+    while(gridPrice >= PriceToInt(buyLowerPrice) && gridPrice >= lowerRange)
+    {
+        if(!CheckOrderExists(gridPrice, true))
+        {
+            int level = (int)(PriceToInt(BuyUpperPrice) - gridPrice) / (int)gridStepPrice;
+
+            // Determine order type based on current Ask price
+            if(gridPrice < currentAsk)
+                PlaceOrder(ORDER_TYPE_BUY_LIMIT, gridPrice, level, true);
+            else
+                PlaceOrder(ORDER_TYPE_BUY_STOP, gridPrice, level, true);
+        }
+        gridPrice -= gridStepPrice;
+    }
+
+    // Remove unnecessary pending orders (outside range)
+    CleanupOrders(lowerRange, upperRange, true, buyLowerPrice, BuyUpperPrice);
 }
 
 //+------------------------------------------------------------------+
