@@ -1,0 +1,49 @@
+name: Compile MQL5
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.mq5'
+      - '**.mqh'
+      - '.github/workflows/compile-mql5.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '**.mq5'
+      - '**.mqh'
+      - '.github/workflows/compile-mql5.yml'
+  workflow_dispatch:
+
+jobs:
+  compile:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Compile MQL5 files
+      uses: fx31337/mql-compile-action@v2
+      with:
+        path: GridTrading.mq5
+        include: .
+        verbose: true
+        init-platform: true
+
+    - name: List compiled files
+      shell: pwsh
+      run: |
+        Write-Host "Searching for compiled .ex5 files..."
+        Get-ChildItem -Path . -Filter *.ex5 -Recurse | ForEach-Object {
+          Write-Host "Found: $($_.FullName)"
+          Write-Host "Size: $($_.Length) bytes"
+        }
+
+    - name: Upload compiled EA
+      uses: actions/upload-artifact@v4
+      with:
+        name: GridTrading-EA
+        path: '**/*.ex5'
+        if-no-files-found: error
+        retention-days: 90
