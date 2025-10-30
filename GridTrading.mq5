@@ -14,16 +14,15 @@ input int      GridStepPips = 5;            // Grid Step & TP (pips)
 input double   LotSize = 0.04;              // Lot Size
 input int      GridRange = 3;               // Grid Range (number of grids from close price)
 input int      MagicNumber = 8001;          // Magic Number
+input double   GridCenterPrice = 147.53;    // Grid Center Price
 
 input group "=== Sell Grid Settings ==="
 input bool     SellEnabled = true;          // Sell Grid Enabled
-input double   SellLowerPrice = 147.53;     // Sell Grid Lower Price (required)
-input int      SellRangePips = 400;         // Sell Grid Range (pips from lower price)
+input int      SellRangePips = 400;         // Sell Grid Range (pips from center)
 
 input group "=== Buy Grid Settings ==="
 input bool     BuyEnabled = true;           // Buy Grid Enabled
-input double   BuyUpperPrice = 147.53;      // Buy Grid Upper Price (required)
-input int      BuyRangePips = 400;          // Buy Grid Range (pips from upper price)
+input int      BuyRangePips = 400;          // Buy Grid Range (pips from center)
 
 // Global Variables
 CTrade trade;
@@ -41,8 +40,10 @@ int lastBidPrice = 0;
 int lastAskPrice = 0;
 
 // Calculated grid boundaries
+double sellLowerPrice = 0;
 double sellUpperPrice = 0;
 double buyLowerPrice = 0;
+double buyUpperPrice = 0;
 
 // Cached symbol info
 int symbolDigits;
@@ -81,58 +82,59 @@ int OnInit()
     Print("Grid Step & TP: ", GridStepPips, " pips (", gridStepPrice * pointValue, ")");
     Print("Lot Size: ", LotSize);
     Print("Grid Range: ", GridRange, " grids from close price");
+    Print("Grid Center Price: ", GridCenterPrice);
+
+    // Validate grid center price
+    if(SellEnabled || BuyEnabled)
+    {
+        if(GridCenterPrice <= 0)
+        {
+            Print("Error: Grid center price is required");
+            return(INIT_PARAMETERS_INCORRECT);
+        }
+    }
 
     // Validate and display sell grid settings
     if(SellEnabled)
     {
-        if(SellLowerPrice <= 0)
-        {
-            Print("Error: Sell grid lower price is required");
-            return(INIT_PARAMETERS_INCORRECT);
-        }
         if(SellRangePips <= 0)
         {
             Print("Error: Sell grid range must be positive");
             return(INIT_PARAMETERS_INCORRECT);
         }
 
-        // Calculate sell upper price from lower price + range pips
+        // Calculate sell grid boundaries from center price
         double pipValue;
         if(symbolDigits == 3 || symbolDigits == 5)
             pipValue = SellRangePips * pointValue * 10;
         else
             pipValue = SellRangePips * pointValue * 100;
 
-        sellUpperPrice = SellLowerPrice + pipValue;
+        sellLowerPrice = GridCenterPrice;
+        sellUpperPrice = GridCenterPrice + pipValue;
 
         Print("--- Sell Grid ---");
-        Print("Lower Price: ", SellLowerPrice);
-        Print("Range: ", SellRangePips, " pips");
-        Print("Upper Price (calculated): ", sellUpperPrice);
+        Print("Price Range: ", sellLowerPrice, " - ", sellUpperPrice, " ", SellRangePips, " pips");
     }
 
     // Validate and display buy grid settings
     if(BuyEnabled)
     {
-        if(BuyUpperPrice <= 0)
-        {
-            Print("Error: Buy grid upper price is required");
-            return(INIT_PARAMETERS_INCORRECT);
-        }
         if(BuyRangePips <= 0)
         {
             Print("Error: Buy grid range must be positive");
             return(INIT_PARAMETERS_INCORRECT);
         }
 
-        // Calculate buy lower price from upper price - range pips
+        // Calculate buy grid boundaries from center price
         double pipValue;
         if(symbolDigits == 3 || symbolDigits == 5)
             pipValue = BuyRangePips * pointValue * 10;
         else
             pipValue = BuyRangePips * pointValue * 100;
 
-        buyLowerPrice = BuyUpperPrice - pipValue;
+        buyUpperPrice = GridCenterPrice;
+        buyLowerPrice = GridCenterPrice - pipValue;
 
         if(buyLowerPrice <= 0)
         {
@@ -141,9 +143,7 @@ int OnInit()
         }
 
         Print("--- Buy Grid ---");
-        Print("Upper Price: ", BuyUpperPrice);
-        Print("Range: ", BuyRangePips, " pips");
-        Print("Lower Price (calculated): ", buyLowerPrice);
+        Print("Price Range: ", buyLowerPrice, " - ", buyUpperPrice, " ", BuyRangePips, " pips");
     }
 
     Print("Initialization Complete");
@@ -297,7 +297,7 @@ void ManageSellGrid(double ask, double bid)
     int lowerRange = lastBidPrice - (GridRange * gridStepPrice);
 
     // Process all grid levels within range
-    int gridPrice = PriceToInt(SellLowerPrice);
+    int gridPrice = PriceToInt(sellLowerPrice);
 
     // Find nearest grid level at or above lower range
     while(gridPrice < lowerRange)
@@ -310,7 +310,7 @@ void ManageSellGrid(double ask, double bid)
     {
         if(!CheckOrderExists(gridPrice, false))
         {
-            int level = (int)(gridPrice - PriceToInt(SellLowerPrice)) / (int)gridStepPrice;
+            int level = (int)(gridPrice - PriceToInt(sellLowerPrice)) / (int)gridStepPrice;
 
             // Determine order type based on current Bid price
             if(gridPrice > currentBid)
@@ -322,7 +322,7 @@ void ManageSellGrid(double ask, double bid)
     }
 
     // Remove unnecessary pending orders (outside range)
-    CleanupOrders(lowerRange, upperRange, false, SellLowerPrice, sellUpperPrice);
+    CleanupOrders(lowerRange, upperRange, false, sellLowerPrice, sellUpperPrice);
 }
 
 //+------------------------------------------------------------------+
@@ -341,7 +341,7 @@ void ManageBuyGrid(double ask, double bid)
     int lowerRange = lastAskPrice - (GridRange * gridStepPrice);
 
     // Process all grid levels within range
-    int gridPrice = PriceToInt(BuyUpperPrice);
+    int gridPrice = PriceToInt(buyUpperPrice);
 
     // Find nearest grid level at or below upper range
     while(gridPrice > upperRange)
@@ -354,7 +354,7 @@ void ManageBuyGrid(double ask, double bid)
     {
         if(!CheckOrderExists(gridPrice, true))
         {
-            int level = (int)(PriceToInt(BuyUpperPrice) - gridPrice) / (int)gridStepPrice;
+            int level = (int)(PriceToInt(buyUpperPrice) - gridPrice) / (int)gridStepPrice;
 
             // Determine order type based on current Ask price
             if(gridPrice < currentAsk)
@@ -366,7 +366,7 @@ void ManageBuyGrid(double ask, double bid)
     }
 
     // Remove unnecessary pending orders (outside range)
-    CleanupOrders(lowerRange, upperRange, true, buyLowerPrice, BuyUpperPrice);
+    CleanupOrders(lowerRange, upperRange, true, buyLowerPrice, buyUpperPrice);
 }
 
 //+------------------------------------------------------------------+
