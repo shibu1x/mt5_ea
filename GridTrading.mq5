@@ -11,6 +11,7 @@
 // Input Parameters
 input group "=== Basic Settings ==="
 input int      GridStepPips = 5;            // Grid Step & TP (pips)
+input bool     UseTakeProfit = true;        // Use Take Profit
 input double   LotSize = 0.04;              // Lot Size
 input int      GridRange = 3;               // Grid Range (number of grids from close price)
 input int      MagicNumber = 8001;          // Magic Number
@@ -474,7 +475,13 @@ bool PlaceOrder(ENUM_ORDER_TYPE orderType, int priceInt, int level, bool isBuy)
 
     // Convert integer price to double
     double price = NormalizeDouble(priceInt * pointValue, symbolDigits);
-    double tp = NormalizeDouble((priceInt + (isBuy ? takeProfitPrice : -takeProfitPrice)) * pointValue, symbolDigits);
+    double tp = 0;
+
+    // Set take profit if enabled
+    if(UseTakeProfit)
+    {
+        tp = NormalizeDouble((priceInt + (isBuy ? takeProfitPrice : -takeProfitPrice)) * pointValue, symbolDigits);
+    }
 
     string orderTypeName = "";
     bool result = false;
