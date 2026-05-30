@@ -12,8 +12,8 @@
 input group "=== Basic Settings ==="
 input int      GridStepPips = 5;            // Grid Step & TP (pips)
 input bool     UseTakeProfit = true;        // Use Take Profit
-input double   LotSize = 0.04;              // Lot Size
-input int      GridRange = 3;               // Grid Range (number of grids from close price)
+input bool     UseStopOrders = false;       // Use Stop Orders (BuyStop/SellStop)
+input double   LotSize = 0.01;              // Lot Size
 input int      MagicNumber = 8001;          // Magic Number
 input double   GridCenterPrice = 147.53;    // Grid Center Price
 
@@ -28,8 +28,8 @@ input int      BuyRangePips = 400;          // Buy Grid Range (pips from center)
 // Global Variables
 CTrade trade;
 int gridStepPrice;
-int takeProfitPrice;
 double pointValue;
+double cachedLotSize;
 int totalBuyOrders = 0;
 int totalSellOrders = 0;
 int highestBuyPrice = 0;
@@ -37,425 +37,20 @@ int lowestBuyPrice = 0;
 int highestSellPrice = 0;
 int lowestSellPrice = 0;
 datetime lastBarTime = 0;
-int lastBidPrice = 0;
-int lastAskPrice = 0;
 
-// Calculated grid boundaries
-double sellLowerPrice = 0;
-double sellUpperPrice = 0;
-double buyLowerPrice = 0;
-double buyUpperPrice = 0;
+// Calculated grid boundaries (as integers)
+int sellLowerInt, sellUpperInt;
+int buyLowerInt, buyUpperInt;
 
 // Cached symbol info
 int symbolDigits;
-double symbolMinLot;
-double symbolMaxLot;
 
 //+------------------------------------------------------------------+
-//| Expert initialization function                                   |
+//| Convert pips to integer price units                              |
 //+------------------------------------------------------------------+
-int OnInit()
+int PipsToInt(int pips)
 {
-    // Trade object settings
-    trade.SetExpertMagicNumber(MagicNumber);
-    trade.SetDeviationInPoints(10);
-    trade.SetTypeFilling(ORDER_FILLING_FOK);
-
-    // Cache symbol information
-    pointValue = _Point;
-    symbolDigits = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
-    symbolMinLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
-    symbolMaxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
-
-    // Convert pips to price (stored as integer)
-    if(symbolDigits == 3 || symbolDigits == 5)
-    {
-        gridStepPrice = (int)MathRound(GridStepPips * pointValue * 10 / pointValue);
-        takeProfitPrice = (int)MathRound(GridStepPips * pointValue * 10 / pointValue);
-    }
-    else
-    {
-        gridStepPrice = (int)MathRound(GridStepPips * pointValue * 100 / pointValue);
-        takeProfitPrice = (int)MathRound(GridStepPips * pointValue * 100 / pointValue);
-    }
-
-    Print("=== Grid Trading EA Initialization ===");
-    Print("Grid Step & TP: ", GridStepPips, " pips (", gridStepPrice * pointValue, ")");
-    Print("Lot Size: ", LotSize);
-    Print("Grid Range: ", GridRange, " grids from close price");
-    Print("Grid Center Price: ", GridCenterPrice);
-
-    // Validate grid center price
-    if(SellEnabled || BuyEnabled)
-    {
-        if(GridCenterPrice <= 0)
-        {
-            Print("Error: Grid center price is required");
-            return(INIT_PARAMETERS_INCORRECT);
-        }
-    }
-
-    // Validate and display sell grid settings
-    if(SellEnabled)
-    {
-        if(SellRangePips <= 0)
-        {
-            Print("Error: Sell grid range must be positive");
-            return(INIT_PARAMETERS_INCORRECT);
-        }
-
-        // Calculate sell grid boundaries from center price
-        double pipValue;
-        if(symbolDigits == 3 || symbolDigits == 5)
-            pipValue = SellRangePips * pointValue * 10;
-        else
-            pipValue = SellRangePips * pointValue * 100;
-
-        sellLowerPrice = GridCenterPrice;
-        sellUpperPrice = GridCenterPrice + pipValue;
-
-        Print("--- Sell Grid ---");
-        Print("Price Range: ", sellLowerPrice, " - ", sellUpperPrice, " ", SellRangePips, " pips");
-    }
-
-    // Validate and display buy grid settings
-    if(BuyEnabled)
-    {
-        if(BuyRangePips <= 0)
-        {
-            Print("Error: Buy grid range must be positive");
-            return(INIT_PARAMETERS_INCORRECT);
-        }
-
-        // Calculate buy grid boundaries from center price
-        double pipValue;
-        if(symbolDigits == 3 || symbolDigits == 5)
-            pipValue = BuyRangePips * pointValue * 10;
-        else
-            pipValue = BuyRangePips * pointValue * 100;
-
-        buyUpperPrice = GridCenterPrice;
-        buyLowerPrice = GridCenterPrice - pipValue;
-
-        if(buyLowerPrice <= 0)
-        {
-            Print("Error: Calculated buy lower price is invalid (", buyLowerPrice, ")");
-            return(INIT_PARAMETERS_INCORRECT);
-        }
-
-        Print("--- Buy Grid ---");
-        Print("Price Range: ", buyLowerPrice, " - ", buyUpperPrice, " ", BuyRangePips, " pips");
-    }
-
-    Print("Initialization Complete");
-    return(INIT_SUCCEEDED);
-}
-
-//+------------------------------------------------------------------+
-//| Expert deinitialization function                                 |
-//+------------------------------------------------------------------+
-void OnDeinit(const int reason)
-{
-    Print("Grid Trading EA Terminated");
-}
-
-//+------------------------------------------------------------------+
-//| Trade event handler                                              |
-//+------------------------------------------------------------------+
-void OnTrade()
-{
-    // Check if a position was closed (take profit or other reason)
-    static int lastPositionCount = 0;
-    int currentPositionCount = 0;
-
-    // Count positions with magic number
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket <= 0) continue;
-
-        if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
-        if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
-
-        currentPositionCount++;
-    }
-
-    // Check if position count decreased (position closed)
-    if(lastPositionCount > currentPositionCount)
-    {
-        // Position was closed, execute grid management
-        Print("Position Closed Detected - Executing Grid Update");
-
-        // Update current position status
-        UpdateGridStatus();
-
-        // Manage sell grid
-        if(SellEnabled)
-        {
-            ManageSellGrid(lastAskPrice, lastBidPrice);
-        }
-
-        // Manage buy grid
-        if(BuyEnabled)
-        {
-            ManageBuyGrid(lastAskPrice, lastBidPrice);
-        }
-    }
-
-    // Update last position count
-    lastPositionCount = currentPositionCount;
-}
-
-//+------------------------------------------------------------------+
-//| Expert tick function                                             |
-//+------------------------------------------------------------------+
-void OnTick()
-{
-    // Check if new bar formed
-    datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
-
-    if(currentBarTime == lastBarTime)
-    {
-        // Still within same bar, no processing
-        return;
-    }
-
-    // New bar confirmed, execute processing
-    lastBarTime = currentBarTime;
-
-    // Get current prices at bar update (convert to integer)
-    lastAskPrice = PriceToInt(SymbolInfoDouble(_Symbol, SYMBOL_ASK));
-    lastBidPrice = PriceToInt(SymbolInfoDouble(_Symbol, SYMBOL_BID));
-    Print("Bar Updated - Reference Prices - Ask: ", lastAskPrice * pointValue, " Bid: ", lastBidPrice * pointValue);
-
-    // Update current position status
-    UpdateGridStatus();
-
-    // Manage sell grid
-    if(SellEnabled)
-    {
-        ManageSellGrid(lastAskPrice, lastBidPrice);
-    }
-
-    // Manage buy grid
-    if(BuyEnabled)
-    {
-        ManageBuyGrid(lastAskPrice, lastBidPrice);
-    }
-}
-
-//+------------------------------------------------------------------+
-//| Update grid status                                               |
-//+------------------------------------------------------------------+
-void UpdateGridStatus()
-{
-    totalBuyOrders = 0;
-    totalSellOrders = 0;
-    highestBuyPrice = 0;
-    lowestBuyPrice = 999999999;
-    highestSellPrice = 0;
-    lowestSellPrice = 999999999;
-
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket <= 0) continue;
-
-        if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
-        if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
-
-        int openPrice = PriceToInt(PositionGetDouble(POSITION_PRICE_OPEN));
-        ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-
-        if(type == POSITION_TYPE_BUY)
-        {
-            totalBuyOrders++;
-            if(openPrice > highestBuyPrice) highestBuyPrice = openPrice;
-            if(openPrice < lowestBuyPrice) lowestBuyPrice = openPrice;
-        }
-        else if(type == POSITION_TYPE_SELL)
-        {
-            totalSellOrders++;
-            if(openPrice > highestSellPrice) highestSellPrice = openPrice;
-            if(openPrice < lowestSellPrice) lowestSellPrice = openPrice;
-        }
-    }
-}
-
-//+------------------------------------------------------------------+
-//| Manage sell grid                                                 |
-//+------------------------------------------------------------------+
-void ManageSellGrid(double ask, double bid)
-{
-    if(lastBidPrice <= 0) return;
-
-    // Get current Bid price for order type determination (convert to integer)
-    int currentBid = PriceToInt(SymbolInfoDouble(_Symbol, SYMBOL_BID));
-
-    // Sell grid uses last Bid price as reference for range
-    // Calculate range based on last Bid price
-    int upperRange = lastBidPrice + (GridRange * gridStepPrice);
-    int lowerRange = lastBidPrice - (GridRange * gridStepPrice);
-
-    // Process all grid levels within range
-    int gridPrice = PriceToInt(sellLowerPrice);
-
-    // Find nearest grid level at or above lower range
-    while(gridPrice < lowerRange)
-    {
-        gridPrice += gridStepPrice;
-    }
-
-    // Place orders at all grid levels within range
-    while(gridPrice <= PriceToInt(sellUpperPrice) && gridPrice <= upperRange)
-    {
-        if(!CheckOrderExists(gridPrice, false))
-        {
-            int level = (int)(gridPrice - PriceToInt(sellLowerPrice)) / (int)gridStepPrice;
-
-            // Determine order type based on current Bid price
-            if(gridPrice > currentBid)
-                PlaceOrder(ORDER_TYPE_SELL_LIMIT, gridPrice, level, false);
-            else
-                PlaceOrder(ORDER_TYPE_SELL_STOP, gridPrice, level, false);
-        }
-        gridPrice += gridStepPrice;
-    }
-
-    // Remove unnecessary pending orders (outside range)
-    CleanupOrders(lowerRange, upperRange, false, sellLowerPrice, sellUpperPrice);
-}
-
-//+------------------------------------------------------------------+
-//| Manage buy grid                                                  |
-//+------------------------------------------------------------------+
-void ManageBuyGrid(double ask, double bid)
-{
-    if(lastAskPrice <= 0) return;
-
-    // Get current Ask price for order type determination (convert to integer)
-    int currentAsk = PriceToInt(SymbolInfoDouble(_Symbol, SYMBOL_ASK));
-
-    // Buy grid uses last Ask price as reference for range
-    // Calculate range based on last Ask price
-    int upperRange = lastAskPrice + (GridRange * gridStepPrice);
-    int lowerRange = lastAskPrice - (GridRange * gridStepPrice);
-
-    // Process all grid levels within range
-    int gridPrice = PriceToInt(buyUpperPrice);
-
-    // Find nearest grid level at or below upper range
-    while(gridPrice > upperRange)
-    {
-        gridPrice -= gridStepPrice;
-    }
-
-    // Place orders at all grid levels within range
-    while(gridPrice >= PriceToInt(buyLowerPrice) && gridPrice >= lowerRange)
-    {
-        if(!CheckOrderExists(gridPrice, true))
-        {
-            int level = (int)(PriceToInt(buyUpperPrice) - gridPrice) / (int)gridStepPrice;
-
-            // Determine order type based on current Ask price
-            if(gridPrice < currentAsk)
-                PlaceOrder(ORDER_TYPE_BUY_LIMIT, gridPrice, level, true);
-            else
-                PlaceOrder(ORDER_TYPE_BUY_STOP, gridPrice, level, true);
-        }
-        gridPrice -= gridStepPrice;
-    }
-
-    // Remove unnecessary pending orders (outside range)
-    CleanupOrders(lowerRange, upperRange, true, buyLowerPrice, buyUpperPrice);
-}
-
-//+------------------------------------------------------------------+
-//| Generic order existence check                                    |
-//+------------------------------------------------------------------+
-bool CheckOrderExists(int gridPrice, bool isBuy)
-{
-    int tolerance = gridStepPrice / 2;
-
-    // Check positions
-    for(int i = PositionsTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = PositionGetTicket(i);
-        if(ticket <= 0) continue;
-
-        if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
-        if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
-
-        ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
-        if((isBuy && posType != POSITION_TYPE_BUY) || (!isBuy && posType != POSITION_TYPE_SELL)) continue;
-
-        int openPrice = PriceToInt(PositionGetDouble(POSITION_PRICE_OPEN));
-        if(MathAbs(openPrice - gridPrice) < tolerance)
-        {
-            return true;
-        }
-    }
-
-    // Check pending orders
-    for(int i = OrdersTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = OrderGetTicket(i);
-        if(ticket <= 0) continue;
-
-        if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
-        if(OrderGetInteger(ORDER_MAGIC) != MagicNumber) continue;
-
-        ENUM_ORDER_TYPE orderType = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
-
-        // Check if order type matches the requested direction
-        bool isOrderBuy = (orderType == ORDER_TYPE_BUY_LIMIT || orderType == ORDER_TYPE_BUY_STOP);
-        bool isOrderSell = (orderType == ORDER_TYPE_SELL_LIMIT || orderType == ORDER_TYPE_SELL_STOP);
-
-        if((isBuy && !isOrderBuy) || (!isBuy && !isOrderSell)) continue;
-
-        int orderPrice = PriceToInt(OrderGetDouble(ORDER_PRICE_OPEN));
-        if(MathAbs(orderPrice - gridPrice) < tolerance)
-        {
-            return true;
-        }
-    }
-
-    return false;
-}
-
-//+------------------------------------------------------------------+
-//| Generic cleanup function for pending orders                      |
-//+------------------------------------------------------------------+
-void CleanupOrders(int lowerRange, int upperRange, bool isBuy, double lowerPrice, double upperPrice)
-{
-    for(int i = OrdersTotal() - 1; i >= 0; i--)
-    {
-        ulong ticket = OrderGetTicket(i);
-        if(ticket <= 0) continue;
-
-        if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
-        if(OrderGetInteger(ORDER_MAGIC) != MagicNumber) continue;
-
-        ENUM_ORDER_TYPE orderType = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
-
-        // Check if order matches the requested type
-        bool isOrderBuy = (orderType == ORDER_TYPE_BUY_LIMIT || orderType == ORDER_TYPE_BUY_STOP);
-        bool isOrderSell = (orderType == ORDER_TYPE_SELL_LIMIT || orderType == ORDER_TYPE_SELL_STOP);
-
-        if((isBuy && !isOrderBuy) || (!isBuy && !isOrderSell)) continue;
-
-        int orderPrice = PriceToInt(OrderGetDouble(ORDER_PRICE_OPEN));
-        int priceLowerInt = PriceToInt(lowerPrice);
-        int priceUpperInt = PriceToInt(upperPrice);
-
-        // Delete orders outside range or price limits
-        if(orderPrice < lowerRange || orderPrice > upperRange ||
-           orderPrice < priceLowerInt || orderPrice > priceUpperInt)
-        {
-            trade.OrderDelete(ticket);
-            Print("Deleted unnecessary ", (isBuy ? "buy" : "sell"), " order: ", EnumToString(orderType), " Price ", orderPrice * pointValue);
-        }
-    }
+    return pips * ((symbolDigits == 3 || symbolDigits == 5) ? 10 : 100);
 }
 
 //+------------------------------------------------------------------+
@@ -467,53 +62,307 @@ int PriceToInt(double price)
 }
 
 //+------------------------------------------------------------------+
+//| Expert initialization function                                   |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+    trade.SetExpertMagicNumber(MagicNumber);
+    trade.SetDeviationInPoints(10);
+    trade.SetTypeFilling(ORDER_FILLING_FOK);
+
+    pointValue    = _Point;
+    symbolDigits  = (int)SymbolInfoInteger(_Symbol, SYMBOL_DIGITS);
+    cachedLotSize = MathMax(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN),
+                    MathMin(SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX), LotSize));
+    gridStepPrice = PipsToInt(GridStepPips);
+
+    Print("=== Grid Trading EA Initialization ===");
+    Print("Grid Step & TP: ", GridStepPips, " pips (", gridStepPrice * pointValue, ")");
+    Print("Lot Size: ", cachedLotSize);
+    Print("Grid Center Price: ", GridCenterPrice);
+
+    if((SellEnabled || BuyEnabled) && GridCenterPrice <= 0)
+    {
+        Print("Error: Grid center price is required");
+        return INIT_PARAMETERS_INCORRECT;
+    }
+
+    int centerInt = PriceToInt(GridCenterPrice);
+
+    if(SellEnabled)
+    {
+        if(SellRangePips < 0)
+        {
+            Print("Error: Sell grid range must be non-negative");
+            return INIT_PARAMETERS_INCORRECT;
+        }
+        sellLowerInt = centerInt;
+        sellUpperInt = centerInt + PipsToInt(SellRangePips);
+        Print("--- Sell Grid ---");
+        Print("Price Range: ", sellLowerInt * pointValue, " - ", sellUpperInt * pointValue, " ", SellRangePips, " pips");
+    }
+
+    if(BuyEnabled)
+    {
+        if(BuyRangePips < 0)
+        {
+            Print("Error: Buy grid range must be non-negative");
+            return INIT_PARAMETERS_INCORRECT;
+        }
+        buyUpperInt = centerInt;
+        buyLowerInt = centerInt - PipsToInt(BuyRangePips);
+        if(buyLowerInt <= 0)
+        {
+            Print("Error: Calculated buy lower price is invalid (", buyLowerInt * pointValue, ")");
+            return INIT_PARAMETERS_INCORRECT;
+        }
+        Print("--- Buy Grid ---");
+        Print("Price Range: ", buyLowerInt * pointValue, " - ", buyUpperInt * pointValue, " ", BuyRangePips, " pips");
+    }
+
+    Print("Initialization Complete");
+    return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+//| Expert deinitialization function                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason)
+{
+    Print("Grid Trading EA Terminated");
+}
+
+//+------------------------------------------------------------------+
+//| Run grid management for all enabled grids                        |
+//+------------------------------------------------------------------+
+void RunGridManagement()
+{
+    UpdateGridStatus();
+    if(SellEnabled && SellRangePips > 0) ManageGrid(false);
+    else if(SellEnabled) CleanupOrders(false, sellLowerInt, sellUpperInt);
+    if(BuyEnabled  && BuyRangePips  > 0) ManageGrid(true);
+    else if(BuyEnabled)  CleanupOrders(true,  buyLowerInt,  buyUpperInt);
+}
+
+//+------------------------------------------------------------------+
+//| Trade event handler                                              |
+//+------------------------------------------------------------------+
+void OnTrade()
+{
+    static int lastPositionCount = 0;
+    int currentPositionCount = 0;
+
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket <= 0) continue;
+        if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+        if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+        currentPositionCount++;
+    }
+
+    if(lastPositionCount > currentPositionCount)
+    {
+        Print("Position Closed Detected - Executing Grid Update");
+        RunGridManagement();
+    }
+
+    lastPositionCount = currentPositionCount;
+}
+
+//+------------------------------------------------------------------+
+//| Expert tick function                                             |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+    datetime currentBarTime = iTime(_Symbol, PERIOD_CURRENT, 0);
+    if(currentBarTime == lastBarTime) return;
+    lastBarTime = currentBarTime;
+
+    Print("Bar Updated");
+    RunGridManagement();
+}
+
+//+------------------------------------------------------------------+
+//| Update grid status                                               |
+//+------------------------------------------------------------------+
+void UpdateGridStatus()
+{
+    totalBuyOrders   = 0;
+    totalSellOrders  = 0;
+    highestBuyPrice  = 0;
+    lowestBuyPrice   = 999999999;
+    highestSellPrice = 0;
+    lowestSellPrice  = 999999999;
+
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket <= 0) continue;
+        if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+        if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+        int openPrice = PriceToInt(PositionGetDouble(POSITION_PRICE_OPEN));
+        ENUM_POSITION_TYPE type = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+
+        if(type == POSITION_TYPE_BUY)
+        {
+            totalBuyOrders++;
+            if(openPrice > highestBuyPrice) highestBuyPrice = openPrice;
+            if(openPrice < lowestBuyPrice)  lowestBuyPrice  = openPrice;
+        }
+        else if(type == POSITION_TYPE_SELL)
+        {
+            totalSellOrders++;
+            if(openPrice > highestSellPrice) highestSellPrice = openPrice;
+            if(openPrice < lowestSellPrice)  lowestSellPrice  = openPrice;
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Manage grid (buy or sell)                                        |
+//+------------------------------------------------------------------+
+void ManageGrid(bool isBuy)
+{
+    int lowerInt = isBuy ? buyLowerInt : sellLowerInt;
+    int upperInt = isBuy ? buyUpperInt : sellUpperInt;
+
+    int currentPrice = isBuy ? PriceToInt(SymbolInfoDouble(_Symbol, SYMBOL_ASK))
+                              : PriceToInt(SymbolInfoDouble(_Symbol, SYMBOL_BID));
+
+    int gridPrice = isBuy ? upperInt : lowerInt;
+    int step      = isBuy ? -gridStepPrice : gridStepPrice;
+
+    while(isBuy ? gridPrice >= lowerInt : gridPrice <= upperInt)
+    {
+        if(!CheckOrderExists(gridPrice, isBuy))
+        {
+            int level = isBuy ? (upperInt - gridPrice) / gridStepPrice
+                               : (gridPrice - lowerInt) / gridStepPrice;
+
+            if(isBuy)
+            {
+                if(gridPrice < currentPrice)
+                    PlaceOrder(ORDER_TYPE_BUY_LIMIT, gridPrice, level, true);
+                else if(UseStopOrders)
+                    PlaceOrder(ORDER_TYPE_BUY_STOP, gridPrice, level, true);
+            }
+            else
+            {
+                if(gridPrice > currentPrice)
+                    PlaceOrder(ORDER_TYPE_SELL_LIMIT, gridPrice, level, false);
+                else if(UseStopOrders)
+                    PlaceOrder(ORDER_TYPE_SELL_STOP, gridPrice, level, false);
+            }
+        }
+        gridPrice += step;
+    }
+
+    CleanupOrders(isBuy, lowerInt, upperInt);
+}
+
+//+------------------------------------------------------------------+
+//| Cleanup pending orders outside fixed grid bounds                 |
+//+------------------------------------------------------------------+
+void CleanupOrders(bool isBuy, int lowerInt, int upperInt)
+{
+    for(int i = OrdersTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = OrderGetTicket(i);
+        if(ticket <= 0) continue;
+        if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+        if(OrderGetInteger(ORDER_MAGIC) != MagicNumber) continue;
+
+        ENUM_ORDER_TYPE orderType = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+        bool isOrderBuy = (orderType == ORDER_TYPE_BUY_LIMIT || orderType == ORDER_TYPE_BUY_STOP);
+        if(isBuy != isOrderBuy) continue;
+
+        int orderPrice = PriceToInt(OrderGetDouble(ORDER_PRICE_OPEN));
+        if(orderPrice < lowerInt || orderPrice > upperInt)
+        {
+            trade.OrderDelete(ticket);
+            Print("Deleted out-of-range ", (isBuy ? "buy" : "sell"), " order: ", EnumToString(orderType), " Price ", orderPrice * pointValue);
+        }
+    }
+}
+
+//+------------------------------------------------------------------+
+//| Generic order existence check                                    |
+//+------------------------------------------------------------------+
+bool CheckOrderExists(int gridPrice, bool isBuy)
+{
+    int tolerance = gridStepPrice / 2;
+
+    for(int i = PositionsTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = PositionGetTicket(i);
+        if(ticket <= 0) continue;
+        if(PositionGetString(POSITION_SYMBOL) != _Symbol) continue;
+        if(PositionGetInteger(POSITION_MAGIC) != MagicNumber) continue;
+
+        ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+        if(isBuy != (posType == POSITION_TYPE_BUY)) continue;
+
+        if(MathAbs(PriceToInt(PositionGetDouble(POSITION_PRICE_OPEN)) - gridPrice) < tolerance)
+            return true;
+    }
+
+    for(int i = OrdersTotal() - 1; i >= 0; i--)
+    {
+        ulong ticket = OrderGetTicket(i);
+        if(ticket <= 0) continue;
+        if(OrderGetString(ORDER_SYMBOL) != _Symbol) continue;
+        if(OrderGetInteger(ORDER_MAGIC) != MagicNumber) continue;
+
+        ENUM_ORDER_TYPE orderType = (ENUM_ORDER_TYPE)OrderGetInteger(ORDER_TYPE);
+        bool isOrderBuy = (orderType == ORDER_TYPE_BUY_LIMIT || orderType == ORDER_TYPE_BUY_STOP);
+        if(isBuy != isOrderBuy) continue;
+
+        if(MathAbs(PriceToInt(OrderGetDouble(ORDER_PRICE_OPEN)) - gridPrice) < tolerance)
+            return true;
+    }
+
+    return false;
+}
+
+//+------------------------------------------------------------------+
 //| Generic order placement function                                 |
 //+------------------------------------------------------------------+
 bool PlaceOrder(ENUM_ORDER_TYPE orderType, int priceInt, int level, bool isBuy)
 {
-    double lots = MathMax(symbolMinLot, MathMin(symbolMaxLot, LotSize));
-
-    // Convert integer price to double
     double price = NormalizeDouble(priceInt * pointValue, symbolDigits);
-    double tp = 0;
+    double tp = UseTakeProfit
+        ? NormalizeDouble((priceInt + (isBuy ? gridStepPrice : -gridStepPrice)) * pointValue, symbolDigits)
+        : 0;
 
-    // Set take profit if enabled
-    if(UseTakeProfit)
-    {
-        tp = NormalizeDouble((priceInt + (isBuy ? takeProfitPrice : -takeProfitPrice)) * pointValue, symbolDigits);
-    }
-
-    string orderTypeName = "";
     bool result = false;
+    string typeName;
 
     switch(orderType)
     {
         case ORDER_TYPE_BUY_STOP:
-            result = trade.BuyStop(lots, price, _Symbol, 0, tp, ORDER_TIME_DAY, 0, "Buy Stop #" + IntegerToString(level));
-            orderTypeName = "Buy Stop";
+            result = trade.BuyStop(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Buy Stop #" + IntegerToString(level));
+            typeName = "Buy Stop";
             break;
         case ORDER_TYPE_BUY_LIMIT:
-            result = trade.BuyLimit(lots, price, _Symbol, 0, tp, ORDER_TIME_DAY, 0, "Buy Limit #" + IntegerToString(level));
-            orderTypeName = "Buy Limit";
+            result = trade.BuyLimit(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Buy Limit #" + IntegerToString(level));
+            typeName = "Buy Limit";
             break;
         case ORDER_TYPE_SELL_STOP:
-            result = trade.SellStop(lots, price, _Symbol, 0, tp, ORDER_TIME_DAY, 0, "Sell Stop #" + IntegerToString(level));
-            orderTypeName = "Sell Stop";
+            result = trade.SellStop(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Sell Stop #" + IntegerToString(level));
+            typeName = "Sell Stop";
             break;
         case ORDER_TYPE_SELL_LIMIT:
-            result = trade.SellLimit(lots, price, _Symbol, 0, tp, ORDER_TIME_DAY, 0, "Sell Limit #" + IntegerToString(level));
-            orderTypeName = "Sell Limit";
+            result = trade.SellLimit(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Sell Limit #" + IntegerToString(level));
+            typeName = "Sell Limit";
             break;
     }
 
     if(result)
-    {
-        Print(orderTypeName, " order success: Level:", level, " Price:", price, " TP:", tp);
-    }
+        Print(typeName, " order success: Level:", level, " Price:", price, " TP:", tp);
     else
-    {
-        Print(orderTypeName, " order failed: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
-    }
+        Print(typeName, " order failed: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
 
     return result;
 }
