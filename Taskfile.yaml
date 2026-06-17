@@ -35,6 +35,11 @@ tasks:
       - mkdir -p bin
       - scp {{.REMOTE_HOST}}:/tmp/{{.NAME}}.ex5 bin/
 
+  deploy:
+    desc: Copy bin/{{.NAME}}.ex5 to local MT5 directory
+    cmds:
+      - cp bin/{{.NAME}}.ex5 {{.MT5_EXPERTS_DIR}}/
+
   start:
     desc: Start mt5-1 container on remote server
     cmds:

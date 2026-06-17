@@ -77,7 +77,7 @@ int OnInit()
     gridStepPrice = PipsToInt(GridStepPips);
 
     Print("=== Grid Trading EA Initialization ===");
-    Print("Grid Step & TP: ", GridStepPips, " pips (", gridStepPrice * pointValue, ")");
+    Print("Grid Step & TP: ", GridStepPips, " pips (", DoubleToString(gridStepPrice * pointValue, symbolDigits), ")");
     Print("Lot Size: ", cachedLotSize);
     Print("Grid Center Price: ", GridCenterPrice);
 
@@ -99,7 +99,7 @@ int OnInit()
         sellLowerInt = centerInt;
         sellUpperInt = centerInt + PipsToInt(SellRangePips);
         Print("--- Sell Grid ---");
-        Print("Price Range: ", sellLowerInt * pointValue, " - ", sellUpperInt * pointValue, " ", SellRangePips, " pips");
+        Print("Price Range: ", DoubleToString(sellLowerInt * pointValue, symbolDigits), " - ", DoubleToString(sellUpperInt * pointValue, symbolDigits), " ", SellRangePips, " pips");
     }
 
     if(BuyEnabled)
@@ -113,11 +113,11 @@ int OnInit()
         buyLowerInt = centerInt - PipsToInt(BuyRangePips);
         if(buyLowerInt <= 0)
         {
-            Print("Error: Calculated buy lower price is invalid (", buyLowerInt * pointValue, ")");
+            Print("Error: Calculated buy lower price is invalid (", DoubleToString(buyLowerInt * pointValue, symbolDigits), ")");
             return INIT_PARAMETERS_INCORRECT;
         }
         Print("--- Buy Grid ---");
-        Print("Price Range: ", buyLowerInt * pointValue, " - ", buyUpperInt * pointValue, " ", BuyRangePips, " pips");
+        Print("Price Range: ", DoubleToString(buyLowerInt * pointValue, symbolDigits), " - ", DoubleToString(buyUpperInt * pointValue, symbolDigits), " ", BuyRangePips, " pips");
     }
 
     Print("Initialization Complete");
@@ -238,22 +238,19 @@ void ManageGrid(bool isBuy)
     {
         if(!CheckOrderExists(gridPrice, isBuy))
         {
-            int level = isBuy ? (upperInt - gridPrice) / gridStepPrice
-                               : (gridPrice - lowerInt) / gridStepPrice;
-
             if(isBuy)
             {
                 if(gridPrice < currentPrice)
-                    PlaceOrder(ORDER_TYPE_BUY_LIMIT, gridPrice, level, true);
+                    PlaceOrder(ORDER_TYPE_BUY_LIMIT, gridPrice, true);
                 else if(UseStopOrders)
-                    PlaceOrder(ORDER_TYPE_BUY_STOP, gridPrice, level, true);
+                    PlaceOrder(ORDER_TYPE_BUY_STOP, gridPrice, true);
             }
             else
             {
                 if(gridPrice > currentPrice)
-                    PlaceOrder(ORDER_TYPE_SELL_LIMIT, gridPrice, level, false);
+                    PlaceOrder(ORDER_TYPE_SELL_LIMIT, gridPrice, false);
                 else if(UseStopOrders)
-                    PlaceOrder(ORDER_TYPE_SELL_STOP, gridPrice, level, false);
+                    PlaceOrder(ORDER_TYPE_SELL_STOP, gridPrice, false);
             }
         }
         gridPrice += step;
@@ -282,7 +279,7 @@ void CleanupOrders(bool isBuy, int lowerInt, int upperInt)
         if(orderPrice < lowerInt || orderPrice > upperInt)
         {
             trade.OrderDelete(ticket);
-            Print("Deleted out-of-range ", (isBuy ? "buy" : "sell"), " order: ", EnumToString(orderType), " Price ", orderPrice * pointValue);
+            Print("Deleted out-of-range ", (isBuy ? "buy" : "sell"), " order: ", EnumToString(orderType), " Price ", DoubleToString(orderPrice * pointValue, symbolDigits));
         }
     }
 }
@@ -329,7 +326,7 @@ bool CheckOrderExists(int gridPrice, bool isBuy)
 //+------------------------------------------------------------------+
 //| Generic order placement function                                 |
 //+------------------------------------------------------------------+
-bool PlaceOrder(ENUM_ORDER_TYPE orderType, int priceInt, int level, bool isBuy)
+bool PlaceOrder(ENUM_ORDER_TYPE orderType, int priceInt, bool isBuy)
 {
     double price = NormalizeDouble(priceInt * pointValue, symbolDigits);
     double tp = UseTakeProfit
@@ -342,25 +339,25 @@ bool PlaceOrder(ENUM_ORDER_TYPE orderType, int priceInt, int level, bool isBuy)
     switch(orderType)
     {
         case ORDER_TYPE_BUY_STOP:
-            result = trade.BuyStop(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Buy Stop #" + IntegerToString(level));
+            result = trade.BuyStop(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Buy Stop");
             typeName = "Buy Stop";
             break;
         case ORDER_TYPE_BUY_LIMIT:
-            result = trade.BuyLimit(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Buy Limit #" + IntegerToString(level));
+            result = trade.BuyLimit(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Buy Limit");
             typeName = "Buy Limit";
             break;
         case ORDER_TYPE_SELL_STOP:
-            result = trade.SellStop(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Sell Stop #" + IntegerToString(level));
+            result = trade.SellStop(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Sell Stop");
             typeName = "Sell Stop";
             break;
         case ORDER_TYPE_SELL_LIMIT:
-            result = trade.SellLimit(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Sell Limit #" + IntegerToString(level));
+            result = trade.SellLimit(cachedLotSize, price, _Symbol, 0, tp, ORDER_TIME_GTC, 0, "Sell Limit");
             typeName = "Sell Limit";
             break;
     }
 
     if(result)
-        Print(typeName, " order success: Level:", level, " Price:", price, " TP:", tp);
+        Print(typeName, " order success: Price:", DoubleToString(price, symbolDigits), " TP:", DoubleToString(tp, symbolDigits));
     else
         Print(typeName, " order failed: ", trade.ResultRetcode(), " - ", trade.ResultRetcodeDescription());
 
